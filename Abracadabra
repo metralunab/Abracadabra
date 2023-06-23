@@ -1,0 +1,98 @@
+import sys
+import time
+import random
+import multiprocessing
+import os
+from web3 import Web3
+from contract_abi import con_abi
+
+def process_transaction(private_key, bridge_amount_min, bridge_amount_max):
+    print(f"Processing transaction for private key: {private_key}")
+    sys.stdout.flush()
+
+    web3 = Web3(Web3.HTTPProvider("https://fantom.publicnode.com"))
+
+    account = web3.eth.account.from_key(private_key)
+    contract = web3.eth.contract(
+        address=web3.to_checksum_address("0xc5c01568a3b5d8c203964049615401aaf0783191"),
+        abi=con_abi
+    )
+
+    address_bytes = bytes.fromhex(account.address[2:])
+    address_bytes_32 = bytes(12) + address_bytes
+
+    tx_data = (
+        "0x000200000000000000000000000000000000000000000000000000000000000186a"
+        "00000000000000000000000000000000000000000000000000000000000000000"
+        f"{account.address[2:]}"
+    )
+
+    #Выставляем количество бриджей
+    transaction_count = 1
+    for i in range(transaction_count):
+        value = contract.functions.estimateSendFee(
+            167,
+            address_bytes_32,
+            int(random.uniform(bridge_amount_min, bridge_amount_max) * 10**18),
+            True,
+            tx_data
+        ).call()
+
+        value = int(value[0])
+
+        transaction = contract.functions.sendFrom(
+            account.address,
+            167,
+            address_bytes_32,
+            int(random.uniform(bridge_amount_min, bridge_amount_max) * 10**18),
+            (account.address, "0x0000000000000000000000000000000000000000", tx_data)
+        ).build_transaction({
+            'from': account.address,
+            'nonce': web3.eth.get_transaction_count(account.address),
+            'gas': 500000,
+            'gasPrice': web3.to_wei('110', 'gwei'),
+            'chainId': 250,
+            'value': value
+        })
+
+        signed_tx = web3.eth.account.sign_transaction(
+            transaction,
+            private_key=private_key
+        )
+        tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        tx_receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
+
+        print(f"Хеш транзакции: {tx_hash.hex()}")
+        sys.stdout.flush()
+
+        delay = random.uniform(5, 8)
+        print(f"Delay: {delay} seconds")
+        sys.stdout.flush()
+        time.sleep(delay)
+
+if __name__ == '__main__':
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    private_keys_file = os.path.join(script_dir, 'private_keys.txt')
+
+    with open(private_keys_file, 'r') as file:
+        private_keys = file.read().splitlines()
+
+    print(f"Total private keys: {len(private_keys)}")
+    sys.stdout.flush()
+
+    bridge_amount_min = float(input("Введите минимальную сумму для бриджинга: "))
+    bridge_amount_max = float(input("Введите максимальную сумму для бриджинга: "))
+
+    pool = multiprocessing.Pool(processes=multiprocessing.cpu_count())
+
+    results = []
+    for private_key in private_keys:
+        delay = random.uniform(5, 9)  # Изменяем диапазон задержки в секундах
+        results.append(pool.apply_async(process_transaction, args=(private_key, bridge_amount_min, bridge_amount_max)))
+        time.sleep(delay)
+
+    for result in results:
+        result.get()
+
+    pool.close()
+    pool.join()
